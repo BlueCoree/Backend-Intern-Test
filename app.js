@@ -4,6 +4,7 @@ const config = require('./config/config');
 const influxdbService = require('./services/influxdb.service');
 const mqttService = require('./services/mqtt.service');
 const indexRoutes = require('./routes/index.routes');
+const errorHandler = require('./middlewares/errorHandling');
 
 const app = express();
 const port = config.server.port || 3000;
@@ -11,6 +12,8 @@ const port = config.server.port || 3000;
 app.use(cors());
 app.use(express.json());
 app.use('/', indexRoutes);
+
+app.use(errorHandler);
 
 async function startServer() {
   try {

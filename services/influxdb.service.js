@@ -21,18 +21,35 @@ class InfluxDBService {
 
     async writeData(panelId, data) {
         try {
-            const { v, i, kw, kwh, pf, time } = data;
+            const { v, i, kw, kwh, klh, pf, time } = data;
 
-            const vFields = v.map((val, idx) => `v_${idx}=${parseFloat(val)}`).join(',');
-            const iFields = i.map((val, idx) => `i_${idx}=${parseFloat(val)}`).join(',');
-            const unixTime = new Date(time).getTime() * 1000000;
-            const line = `energy_monitoring,pmCode=${panelId} ${vFields},${iFields},kW=${parseFloat(kw)},kWh=${parseFloat(kwh)},pf=${parseFloat(pf)} ${unixTime}`;
+            const kwhValue = kwh || klh;
+
+            if (!v || !i || kw === undefined || kwhValue === undefined || !time) {
+                console.error(`Invalid data from ${panelId}:`, data);
+                return false;
+            }
+
+            const vFields = v.map((val, idx) => `v_${idx}=${parseFloat(val) || 0}`).join(',');
+            const iFields = i.map((val, idx) => `i_${idx}=${parseFloat(val) || 0}`).join(',');
+            const kwValue = parseFloat(kw) || 0;
+            const kwhVal = parseFloat(kwhValue) || 0;
+            const pfValue = parseFloat(pf) || 0;
+
+            const timestamp = new Date(time);
+            if (isNaN(timestamp.getTime())) {
+                console.error(`Invalid timestamp from ${panelId}:`, time);
+                return false;
+            }
+            const unixTime = timestamp.getTime() * 1000000;
+
+            const line = `energy_monitoring,pmCode=${panelId} ${vFields},${iFields},kW=${kwValue},kWh=${kwhVal},pf=${pfValue} ${unixTime}`;
 
             await this.client.write(line, config.influxdb.database);
-            console.log(`Data Saved: ${panelId} | kWh: ${kwh}`);
+            console.log(`Data Saved: ${panelId} | kWh: ${kwhVal}`);
             return true;
         } catch (error) {
-            console.error('Influx Write Error:', error.message);
+            console.error(`ERROR: Write to InfluxDB failed.`, error);
             return false;
         }
     }
@@ -112,6 +129,44 @@ class InfluxDBService {
         } catch (error) {
             console.error('Error querying yearly stats:', error.message);
             return [];
+        }
+    }
+
+    async getTodayUsage(panelId) {
+        try {
+            const today = new Date().toISOString().split('T')[0];
+
+            const query = `
+                SELECT 
+                    MIN("kWh") as start_kwh,
+                    MAX("kWh") as current_kwh
+                FROM energy_monitoring
+                WHERE "pmCode" = '${panelId}'
+                    AND time >= '${today}T00:00:00Z'
+            `;
+
+            const result = await this.client.query(query, config.influxdb.database);
+            
+            for await (const row of result) {
+                const startKwh = parseFloat(row.start_kwh) || 0;
+                const currentKwh = parseFloat(row.current_kwh) || 0;
+                const usage = currentKwh - startKwh;
+
+                if (currentKwh === 0 && startKwh === 0) {
+                    return null;
+                }
+
+                return {
+                    startKwh: startKwh,
+                    currentKwh: currentKwh,
+                    todayUsage: usage > 0 ? usage.toFixed(2) : "0.00"
+                };
+            }
+
+            return null;
+        } catch (error) {
+            console.error('Error querying today usage:', error.message);
+            return null;
         }
     }
 

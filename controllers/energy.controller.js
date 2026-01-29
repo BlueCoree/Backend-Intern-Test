@@ -1,9 +1,15 @@
 const influxdbService = require('../services/influxdb.service');
 
 class EnergyController {
-    async getRealtimeData(req, res) {
+  async getRealtimeData(req, res, next) {
     try {
       const panels = await influxdbService.getDashboardData();
+
+      if (!panels || panels.length === 0) {
+        const error = new Error("Gagal terhubung ke Database");
+        error.name = "DatabaseError";
+        throw error;
+      }
 
       const formattedData = panels.map(panel => {
         if (panel.status === 'ONLINE') {
@@ -30,28 +36,65 @@ class EnergyController {
       });
 
       res.json({
-        status: 'OK',
+        status: 'Success',
         data: formattedData
       });
     } catch (error) {
-      res.status(500).json({ status: 'ERROR', message: error.message });
+      next(error);
     }
   }
 
-  async getYearlyStats(req, res) {
+  async getTodayUsage(req, res, next) {
+    try {
+      const { panel } = req.params;
+
+      const usage = await influxdbService.getTodayUsage(panel);
+
+      if (!usage) {
+        const error = new Error(`Panel ${panel} tidak ditemukan atau tidak ada data`);
+        error.name = "NotFound";
+        throw error;
+      }
+
+      res.json({
+        panel: panel,
+        usage_kwh: parseFloat(usage.todayUsage),
+        total_cost: Math.round(usage.todayUsage * 1500),
+        last_update: new Date().toISOString()
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async getYearlyStats(req, res, next) {
     try {
       const year = req.query.year || new Date().getFullYear();
+
+      // Validasi year
+      if (isNaN(year) || year < 2000 || year > 2100) {
+        const error = new Error("Format tahun tidak valid");
+        error.name = "BadRequest";
+        throw error;
+      }
+
       const stats = await influxdbService.getTotalEnergyUsage(parseInt(year));
-      
+
+      if (!stats) {
+        const error = new Error("Gagal terhubung ke Database");
+        error.name = "DatabaseError";
+        throw error;
+      }
+
       res.json({
-        status: 'OK',
+        status: 'Success',
         data: {
           year: year,
           monthly_stats: stats
         }
       });
     } catch (error) {
-      res.status(500).json({ status: 'ERROR', message: error.message });
+      next(error);
     }
   }
 }
